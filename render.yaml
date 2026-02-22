@@ -1,14 +1,9 @@
 services:
   - type: web
-    name: evin-clone   # يمكنك تغيير الاسم كما تريد
+    name: evin-clone   # أو أي اسم تختاره
     runtime: python
     buildCommand: pip install -r requirements.txt
     startCommand: gunicorn -w 4 -b 0.0.0.0:$PORT app:app
     envVars:
       - key: PYTHON_VERSION
         value: 3.11.0
-      # إذا أردت إضافة التوكلن كمتغيرات بيئة (موصى به للأمان)، أضف السطرين التاليين:
-      # - key: TELEGRAM_BOT_TOKEN
-      #   value: "8554468568:AAFvQJVSo6TtBao6xreo_Zf1DxnFupKVTrc"
-      # - key: TELEGRAM_CHAT_ID
-      #   value: "1367401179"
